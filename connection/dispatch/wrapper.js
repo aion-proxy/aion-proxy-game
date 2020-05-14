@@ -41,9 +41,9 @@ class ModWrapper {
 					}
 				}},
 			})
-
+	
 			const dispatchOverride = {
-				protocol: require('tera-data-parser').protocol,
+				protocol: require('aion-data-parser').protocol,
 				moduleManager: {
 					get: name => dispatch.loadedMods.get(name),
 					isLoaded: name => this.isLoaded(name)
@@ -56,8 +56,8 @@ class ModWrapper {
 			function checkLogAbuse(msg) {
 				if(logAbuse) return true
 				if(msg.includes('on an unsupported legacy version')) {
-					log.warn('This mod contains anti-features aimed at degrading user experience for tera-proxy users'
-						+ '\nPlease contact [ Pinkie Pie#7969 ] on Discord to report this issue')
+					log.warn('This mod contains anti-features aimed at degrading user experience for aion-proxy users'
+						+ '\nPlease contact [ NekoNeko#0440 ] on Discord to report this issue')
 					return logAbuse = true
 				}
 			}
@@ -106,18 +106,19 @@ class ModWrapper {
 					console.log(`[compat] Error migrating settings for "${this.name}"`)
 					console.log(e)
 				}
-
+		/*
  			if(this.name !== 'tera-game-state')
 				this.hook('S_RETURN_TO_LOBBY', 'raw', () => {
 					for(let t of this[kTimers]) this.clearTimeout(t)
 				})
-
+		
 			// Workaround improper usage
 			if(this.info.servers && this.info.servers.some(s =>
 				/^https:\/\/raw\.githubusercontent\.com\/(caali-hackerman|tera-toolbox(-mods)?|tera-shiraneko)\//i.test(s.toLowerCase())
 			))
 				dispatchOverride.proxyAuthor = this.proxyAuthor = 'caali'
-		}
+		*/
+			}
 
 		if(info.reloadable) {
 			if(hotswapProxy) {

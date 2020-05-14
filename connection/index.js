@@ -1,29 +1,36 @@
+// TODO ? Cleanup XD
+
 const net = require('net')
 
-const Dispatch = require('./dispatch')
-const Encryption = require('./encryption')
-const Packetizer = require('../packetizer')
+const Dispatch = require('./dispatch'),
+	  AionCrypto = require('aion-crypto'),
+	  Packetizer = require('../packetizer'),
+	  decryptor = new AionCrypto(),
+	  encryptor = new AionCrypto()
 
 class Connection {
-	constructor(dispatch, info = {}) {
-		this.info = info
+	constructor(dispatch) {
+		//this.info = info
 		this.client = null
 		this.dispatch = dispatch
 		dispatch.connection = this // TODO: Consider refactoring
+		//AionCrypto.connection = this
 
 		this.state = -1
-		this.session = new Encryption(this.info.classic)
+		//this.session = new Encryption(this.info.classic)
 		this.packetizer = new Packetizer(data => {
 			if(this.dispatch) data = this.dispatch.handle(data, true)
 			if(data)
+			//console.log('packetizerCN '+data.toString('hex'))
 				// Note: socket.write() is not thread-safe
-				this.sendClient(data.buffer === this.packetizer.buffer.buffer ? Buffer.from(data) : data)
+				//this.sendClient(data.buffer === this.packetizer.buffer.buffer ? Buffer.from(data) : data)
+				//this.sendClient(data)
+				this.decryptServer(data);
 		})
 	}
 
 	connect(client, opt) {
 		this.client = client
-
 		this.serverConnection = net.connect(opt)
 		this.serverConnection.setNoDelay(true)
 
@@ -33,7 +40,9 @@ class Connection {
 		})
 
 		this.serverConnection.on('data', (data) => {
-			switch (this.state) {
+			this.sendClient(data)
+			this.packetizer.recv(data)
+			/*switch (this.state) {
 				case -1: {
 					if(data.readUInt32LE(0) === 1) {
 						this.state = 0
@@ -62,7 +71,7 @@ class Connection {
 				}
 
 				case 2: {
-					this.session.encrypt(data)
+					//this.session.encrypt(data)
 					this.packetizer.recv(data)
 					break
 				}
@@ -73,6 +82,7 @@ class Connection {
 					break
 				}
 			}
+			*/
 		})
 
 		this.serverConnection.on('close', () => {
@@ -83,7 +93,7 @@ class Connection {
 		return this.serverConnection
 	}
 
-	setClientKey(key) {
+	/*setClientKey(key) {
 		if(key.length !== 128) {
 			throw new Error('key length != 128')
 		}
@@ -95,16 +105,24 @@ class Connection {
 		key.copy(this.session.clientKeys[this.state])
 		this.serverConnection.write(key)
 	}
-
+	*/
 	sendClient(data) {
-		if(this.client) {
+			if(this.client) {
 			this.client.onData(data)
 		}
 	}
-
+	decryptServer(data) {
+		decryptor.decryptServer(data)
+		console.log('[S] '+data.toString('hex'));
+	}
+	decryptClient(data) {
+		decryptor.decryptClient(data)
+		console.log('[C] '+data.toString('hex'));
+	}
+	
 	sendServer(data) {
 		if(this.serverConnection) {
-			if(this.state === 2) this.session.decrypt(data)
+			//if(this.state === 2) this.session.decrypt(data)
 			this.serverConnection.write(data)
 		}
 	}
