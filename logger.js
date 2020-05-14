@@ -1,1 +1,1 @@
-module.exports = require('log')('tera-proxy-game')
+module.exports = require('log')('aion-proxy-game')

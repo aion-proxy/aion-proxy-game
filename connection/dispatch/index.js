@@ -2,18 +2,21 @@ const EventEmitter = require('events'),
 	path = require('path'),
 	util = require('util'),
 	binarySearch = require('binary-search'),
-	{ revisions, protocol, sysmsg } = require('tera-data-parser'),
+	{ protocol: AionProtocol } = require('aion-data-parser'),
+	//{ revisions, protocol, sysmsg } = require('aion-data-parser'),
 	log = require('../../logger'),
-	compat = require('../../compat'),
+	//compat = require('../../compat'),
 	Wrapper = require('./wrapper')
 
-protocol.load(require.resolve('tera-data'))
-
+//protocol.load(require.resolve('aion-data'))
+//const latestDefVersion = new Map()
 const latestDefVersion = new Map()
+for(const [name, versions] of AionProtocol.defs)
+	latestDefVersion.set(name, Math.max(...versions.keys()))
 
-if(protocol.messages)
+/*if(protocol.messages)
 	for(const [name, defs] of protocol.messages)
-		latestDefVersion.set(name, Math.max(...defs.keys()))
+*/
 
 function* iterateHooks(globalHooks = [], codeHooks = []) {
 	const globalHooksIterator = globalHooks[Symbol.iterator](); // .values()
@@ -75,20 +78,20 @@ function parseStack(err) {
 
 function errStack(err = new Error(), removeFront = true) {
 	const stack = parseStack(err)
-	const libPath = /tera-proxy-game[\\/]lib/
+	const libPath = /aion-proxy-game[\\/]lib/
 
 	// remove node internals from end
 	while (stack.length > 0 && !path.isAbsolute(stack[stack.length - 1].filename)) {
 		stack.pop()
 	}
 
-	// remove tera-proxy-game internals from end
+	// remove aion-proxy-game internals from end
 	while (stack.length > 0 && libPath.test(stack[stack.length - 1].filename)) {
 		stack.pop()
 	}
 
 	if(removeFront) {
-		// remove tera-proxy-game internals from front
+		// remove aion-proxy-game internals from front
 		while (stack.length > 0 && libPath.test(stack[0].filename)) {
 			stack.shift()
 		}
