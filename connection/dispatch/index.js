@@ -3,20 +3,13 @@ const EventEmitter = require('events'),
 	util = require('util'),
 	binarySearch = require('binary-search'),
 	{ protocol: AionProtocol } = require('aion-data-parser'),
-	//{ revisions, protocol, sysmsg } = require('aion-data-parser'),
 	log = require('../../logger'),
-	//compat = require('../../compat'),
+	compat = require('../../compat'),
 	Wrapper = require('./wrapper')
 
-//protocol.load(require.resolve('aion-data'))
-//const latestDefVersion = new Map()
 const latestDefVersion = new Map()
 for(const [name, versions] of AionProtocol.defs)
 	latestDefVersion.set(name, Math.max(...versions.keys()))
-
-/*if(protocol.messages)
-	for(const [name, defs] of protocol.messages)
-*/
 
 function* iterateHooks(globalHooks = [], codeHooks = []) {
 	const globalHooksIterator = globalHooks[Symbol.iterator](); // .values()
@@ -124,7 +117,7 @@ class Dispatch extends EventEmitter {
 			})
 		})
 
-		if(protocolVersion) this.setProtocolVersion(protocolVersion)
+		//if(protocolVersion) this.setProtocolVersion(protocolVersion)
 	}
 
 	reset() {
@@ -221,8 +214,10 @@ class Dispatch extends EventEmitter {
 	}
 
 	hook(modName, name, version, opts, cb) {
+		if(typeof version !== 'number' && version !== '*' && version !== 'raw' && !version?.read)
+			throw TypeError(`[dispatch] hook: invalid version specified (${version})`)
+
 		// Parse args
-		if(typeof version !== 'number' && version !== '*' && version !== 'raw') throw TypeError(`[dispatch] hook: invalid version specified (${version})`)
 		if(typeof opts === 'function') {
 			cb = opts
 			opts = {}
@@ -234,18 +229,19 @@ class Dispatch extends EventEmitter {
 		// Wildcard
 		if(name === '*') {
 			code = '*'
-			if(typeof version === 'number') throw TypeError(`[dispatch] hook: * hook must request version '*' or 'raw' (given: ${version})`)
+			if(version !== '*' && version !== 'raw')
+				throw TypeError(`[dispatch] hook: * hook must request version '*' or 'raw' (given: ${version})`)
 		}
 		// Named packet
 		else {
 			// Check if opcode is mapped
-			code = this.protocolMap.name.get(name)
+			code = this.protocol.packetEnum.name.get(name)
 			if(code == null) throw Error(`[dispatch] hook: unmapped packet "${name}"`)
 
 			// Check if definition exists
-			if(version !== 'raw') {
-				let def = protocol.messages.get(name)
-				if(def) def = def.get(version)
+			if(typeof version === 'number' || version === '*') {
+				let def = AionProtocol.defs.get(name)
+				if(def) def = version === '*' ? !!def.size : def.has(version)
 				if(!def)
 					if(latestDefVersion.get(name) > version)
 						throw Error(`[dispatch] hook: obsolete defintion (${name}.${version})`)
@@ -304,18 +300,19 @@ class Dispatch extends EventEmitter {
 
 		if(Buffer.isBuffer(name)) data = Buffer.from(name) // Raw mode
 		else {
-			if(typeof version !== 'number' && version !== '*') throw TypeError(`[dispatch] write: invalid version specified (${version})`)
+			if(typeof version !== 'number' && version !== '*' && !version?.write)
+				throw TypeError(`[dispatch] write: invalid version specified (${version})`)
 
-			if(version !== '*') {
+			if(typeof version === 'number') {
 				const latest = latestDefVersion.get(name)
 				if(latest && version < latest)
 					log.dwarn([
-						`[dispatch] write: ${getMessageName(this.protocolMap, name, version, name)} is not latest version (${latest})`,
+						`[dispatch] write: ${getMessageName(this.protocol.packetEnum, name, version, name)} is not latest version (${latest})`,
 						errStack()
 					].join('\n'))
 			}
 
-			data = protocol.write(this.protocolVersion, name, version, data)
+			data = this.protocol.write(name, version, data)
 		}
 
 		data = this.handle(data, !outgoing, true)
@@ -326,52 +323,41 @@ class Dispatch extends EventEmitter {
 	}
 
 	setProtocolVersion(version) {
-		this.protocolVersion = version
-		this.protocolMap = protocol.maps.get(version)
+		try {
+			this.protocol = new AionProtocol(version)
+			// TODO: Re-check these and see if they're still needed
+			Object.assign(this, {
+				protocolVersion: version,
+				region: this.protocol.region,
+				majorPatchVersion: this.protocol.majorPatchVersion,
+				minorPatchVersion: this.protocol.minorPatchVersion,
+				sysmsgVersion: this.protocol.sysmsgVersion,
+				protocolMap: this.protocol.packetEnum,
+				sysmsgMap: this.protocol.sysmsgEnum
+			})
 
-		if(this.protocolMap) {
-			if(revisions[version]) {
-				this.setRevision(revisions[version])
+			log.info(`Detected protocol version ${version} - patch ${this.protocol.gameVersion}`)
 
-				log.info(`Detected protocol version ${version} - patch ${this.getPatchVersion()}`)
-
-				const sysmsgVersion = this.sysmsgVersion || this.majorPatchVersion
-				// Uncomment if sysmsg differs by minor patch version in multiple regions at once
-				//const sysmsgVersion = this.sysmsgVersion || this.majorPatchVersion + this.minorPatchVersion.toString().padStart(2, '0')
-
-				this.sysmsgMap = sysmsg.maps.get(sysmsgVersion)
-				if(!this.sysmsgMap) log.warn(`sysmsg.${sysmsgVersion}.map not found`)
-
-				this.emit('init')
-			}
-			else log.error(`Entry for protocol ${version} not found in revisions.json`)
+			this.emit('init')
 		}
-		else if(version !== 0)
-			log.error(`Unmapped protocol version ${version}`)
+		catch(e) {
+			log.error(e)
+		}
 	}
 
-	setRevision(rev) {
-		// (region-)majorPatchVersion(.minorPatchVersion)(/sysmsgVersion)
-		const match = /^((.+?)-)?(\d+)(\.(\d+))?(\/(\d+))?$/.exec(rev)
-
-		if(!match) throw Error(`Invalid revision "${rev}"`)
-
-		this.region = match[2]
-		this.majorPatchVersion = Number(match[3])
-		this.minorPatchVersion = Number(match[5]) || 0
-		this.sysmsgVersion = match[7] ? Number(match[7]) : undefined
-	}
-
+	// TODO: Probably remove this and use this.protocol.gameVersion
 	getPatchVersion() { return this.majorPatchVersion + this.minorPatchVersion/100 }
 
-	// parse(name, version, data)
-	parse(name, version, data) {
-		return protocol.parse(this.protocolVersion, name, version, data)
-	}
+	// name, version, file
+	addDefinition(name, version, file) {
+		if(typeof version !== 'number') throw Error('version must be a number')
 
-	// serialize(name, version, data[, opcode])
-	serialize(name, version, data, opcode) {
-		return protocol.write(this.protocolVersion, name, version, data)
+		const versions = AionProtocol.defs.get(name)
+		if(versions && versions.has(version)) return
+
+		AionProtocol.addDef(name, version, file)
+
+		if(!(latestDefVersion.get(name) > version)) latestDefVersion.set(name, version)
 	}
 
 	parseSystemMessage(message) {
@@ -379,7 +365,7 @@ class Dispatch extends EventEmitter {
 
 		const tokens = message.split('\v'),
 			id = tokens[0].substring(1),
-			name = id.includes(':') ? id : this.sysmsgMap.code.get(parseInt(id))
+			name = id.includes(':') ? id : this.protocol.sysmsgEnum.code.get(parseInt(id))
 
 		if(!name) throw Error(`Unmapped system message ${id} ("${message}")`)
 
@@ -397,7 +383,7 @@ class Dispatch extends EventEmitter {
 			if(!message.id) throw Error('message.id is required')
 		}
 
-		const id = message.id.toString().includes(':') ? message.id : this.sysmsgMap.name.get(message.id)
+		const id = message.id.toString().includes(':') ? message.id : this.protocol.sysmsgEnum.name.get(message.id)
 		if(!id) throw Error(`Unknown system message "${message.id}"`)
 
 		data = message.tokens
@@ -408,26 +394,27 @@ class Dispatch extends EventEmitter {
 	}
 
 	handle(data, incoming, fake = false) {
+		//console.log('dispatch '+data.toString('hex'))
 		const code = data.readUInt16LE(2)
-
-		if(code === 19900 && !this.protocolVersion) { // C_CHECK_VERSION
-			// TODO hack; we should probably find a way to hardcode this, but it'll
-			// work for now since this packet should never change (?)
-			const ver = protocol.maps.keys().next().value
-
+	//	console.log('opcode '+code+' Data: '+data.toString('hex'))
+		
+		if(code === 72 && !this.protocolVersion) { // CM_VERSION_CHECK
 			try {
-				const parsed = protocol.parse(ver, code, 1, data),
-					[item] = parsed.version
+				
+				//const parsed = AionProtocol.parseVersionCheck(data),
+				//	shareRevision = parsed.version.find(v => v.index === 0)
+				const shareRevision = 50721
+					
 
-				if(!item || item.index !== 0) {
+				if(!shareRevision) {
 					log.error([
 						'[dispatch] handle: failed to retrieve protocol version from C_CHECK_VERSION<1> (index != 0)',
-						`data: ${data.toString('hex')}`,
-						`item: ${JSON.stringify(item)}`,
+						`data: ${data.toString('hex')}`
 					].join('\n'))
-				} else {
-					this.setProtocolVersion(item.value)
 				}
+				else this.setProtocolVersion(50721)
+				//else this.setProtocolVersion(shareRevision.value)
+				
 			}
 			catch(e) {
 				log.error([
@@ -443,8 +430,7 @@ class Dispatch extends EventEmitter {
 		const globalHooks = this.hooks.get('*')
 		const codeHooks = this.hooks.get(code)
 		if(!globalHooks && !codeHooks) return data
-
-		const { protocolVersion } = this
+		
 		let modified = false
 		let silenced = false
 
@@ -468,10 +454,6 @@ class Dispatch extends EventEmitter {
 
 		bufferAttachFlags(data)
 
-		let eventCache = [],
-			iter = 0,
-			hooks = (globalHooks ? globalHooks.size : 0) + (codeHooks ? codeHooks.size : 0)
-
 		for(const hook of iterateHooks(globalHooks, codeHooks)) {
 			// check flags
 			const { filter } = hook
@@ -479,8 +461,6 @@ class Dispatch extends EventEmitter {
 			if(filter.incoming != null && filter.incoming !== incoming) continue
 			if(filter.modified != null && filter.modified !== modified) continue
 			if(filter.silenced != null && filter.silenced !== silenced) continue
-
-			const lastHook = ++iter === hooks
 
 			if(hook.definitionVersion === 'raw')
 				try {
@@ -497,7 +477,7 @@ class Dispatch extends EventEmitter {
 				}
 				catch(e) {
 					log.error([
-						`[dispatch] handle: error running raw hook for ${getMessageName(this.protocolMap, code, hook.definitionVersion)}`,
+						`[dispatch] handle: error running raw hook for ${getMessageName(this.protocol.packetEnum, code, hook.definitionVersion)}`,
 						`hook: ${getHookName(hook)}`,
 						`data: ${data.toString('hex')}`,
 						`error: ${e.message}`,
@@ -507,11 +487,10 @@ class Dispatch extends EventEmitter {
 				}
 			else { // normal hook
 				try {
-					const defVersion = hook.definitionVersion
-					
-					let event = eventCache[defVersion] || (eventCache[defVersion] = protocol.parse(protocolVersion, code, defVersion, data))
+					const defVersion = hook.definitionVersion,
+						event = this.protocol.read(code, defVersion, data)
 
-					objectAttachFlags(lastHook ? event : (event = deepClone(event)))
+					objectAttachFlags(event)
 
 					try {
 						const result = hook.callback(event, fake)
@@ -521,13 +500,12 @@ class Dispatch extends EventEmitter {
 							silenced = false
 
 							try {
-								data = protocol.write(protocolVersion, code, defVersion, event)
+								data = this.protocol.write(code, defVersion, event)
 								bufferAttachFlags(data)
-
-								eventCache = []
-							} catch (e) {
+							}
+							catch(e) {
 								log.error([
-									`[dispatch] handle: failed to generate ${getMessageName(this.protocolMap, code, defVersion)}`,
+									`[dispatch] handle: failed to generate ${getMessageName(this.protocol.packetEnum, code, defVersion)}`,
 									`hook: ${getHookName(hook)}`,
 									`error: ${e.message}`,
 									errStack(e, false),
@@ -538,7 +516,7 @@ class Dispatch extends EventEmitter {
 					}
 					catch(e) {
 						log.error([
-							`[dispatch] handle: error running hook for ${getMessageName(this.protocolMap, code, defVersion)}`,
+							`[dispatch] handle: error running hook for ${getMessageName(this.protocol.packetEnum, code, defVersion)}`,
 							`hook: ${getHookName(hook)}`,
 							`data: ${util.inspect(event)}`,
 							`error: ${e.message}`,
@@ -548,7 +526,7 @@ class Dispatch extends EventEmitter {
 				}
 				catch(e) {
 					log.error([
-						`[dispatch] handle: failed to parse ${getMessageName(this.protocolMap, code, hook.definitionVersion)}`,
+						`[dispatch] handle: failed to parse ${getMessageName(this.protocol.packetEnum, code, hook.definitionVersion)}`,
 						`hook: ${getHookName(hook)}`,
 						`data: ${data.toString('hex')}`,
 						`error: ${e.message}`,
@@ -558,30 +536,10 @@ class Dispatch extends EventEmitter {
 			}
 		}
 
-		// return value
-		return (!silenced ? data : false)
+		if(silenced) return false
+
+		return data
 	}
-}
-
-// Faster than re-parsing a packet
-function deepClone(obj) {
-	if(obj instanceof Buffer) return Buffer.from(obj)
-
-	if(Array.isArray(obj))
-		return obj.map(val => typeof val === 'object' ? deepClone(val) : val)
-
-	let copy = Object.create(obj.__proto__)
-
-	for(let key in obj) {
-		let val = obj[key]
-
-		if(typeof val === 'object')
-			copy[key] = deepClone(val)
-		else
-			copy[key] = val
-	}
-
-	return copy
 }
 
 module.exports = Dispatch

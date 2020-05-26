@@ -41,22 +41,23 @@ class ModWrapper {
 					}
 				}},
 			})
-	
+
 			const dispatchOverride = {
-				protocol: require('aion-data-parser').protocol,
+				//protocol: require('tera-data-parser').protocol,
 				moduleManager: {
 					get: name => dispatch.loadedMods.get(name),
-					isLoaded: name => this.isLoaded(name)
+					isLoaded: name => this.isLoaded(name),
+					isInstalled: name => this.isLoaded(name)
 				},
-				fromRaw: dispatch.parse,
-				toRaw: dispatch.serialize
+				fromRaw: this.parse.bind(this),
+				toRaw: this.serialize.bind(this)
 			}
 
 			let logAbuse = false
 			function checkLogAbuse(msg) {
 				if(logAbuse) return true
-				if(msg.includes('on an unsupported legacy version')) {
-					log.warn('This mod contains anti-features aimed at degrading user experience for aion-proxy users'
+				if(msg.includes('trying to use this module on an unsupported')) {
+					log.warn('This mod contains anti-features aimed at degrading user experience for AION-proxy users'
 						+ '\nPlease contact [ NekoNeko#0440 ] on Discord to report this issue')
 					return logAbuse = true
 				}
@@ -106,19 +107,13 @@ class ModWrapper {
 					console.log(`[compat] Error migrating settings for "${this.name}"`)
 					console.log(e)
 				}
-		/*
- 			if(this.name !== 'tera-game-state')
-				this.hook('S_RETURN_TO_LOBBY', 'raw', () => {
-					for(let t of this[kTimers]) this.clearTimeout(t)
-				})
-		
+
 			// Workaround improper usage
 			if(this.info.servers && this.info.servers.some(s =>
 				/^https:\/\/raw\.githubusercontent\.com\/(caali-hackerman|tera-toolbox(-mods)?|tera-shiraneko)\//i.test(s.toLowerCase())
 			))
 				dispatchOverride.proxyAuthor = this.proxyAuthor = 'caali'
-		*/
-			}
+		}
 
 		if(info.reloadable) {
 			if(hotswapProxy) {
@@ -257,8 +252,11 @@ class ModWrapper {
 	toClient(...args) { return this.dispatch.write(false, ...args) }
 	toServer(...args) { return this.dispatch.write(true, ...args) }
 
-	parse(...args) { return this.dispatch.parse(...args) }
-	serialize(...args) { return this.dispatch.serialize(...args) }
+	compileProto(...args) { return this.dispatch.protocol.compileProto(...args) }
+	getProto(...args) { return this.dispatch.protocol.getProto(...args) }
+	parse(...args) { return this.dispatch.protocol.read(...args) }
+	serialize(...args) { return this.dispatch.protocol.write(...args) }
+	packetLength(...args) { return this.dispatch.protocol.length(...args) }
 
 	parseSystemMessage(...args) { return this.dispatch.parseSystemMessage(...args) }
 	buildSystemMessage(...args) { return this.dispatch.buildSystemMessage(...args) }
